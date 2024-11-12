@@ -15,12 +15,12 @@
     <form id="geoForm">
 		<select id="apiEndpoint" name="apiEndpoint">
             <option value="https://data.calgary.ca/resource/uc4c-6kbd.geojson?$where=within_circle(multipolygon," data-option="1">Rooflines</option>
-            <option value="https://data.calgary.ca/resource/tfs4-3wwa.geojson?$where=within_circle(point," data-option="2">Trees</option>
-            <option value="https://data.calgary.ca/resource/muzh-c9qc.geojson?$where=within_circle(point," data-option="3">Transit Stops</option>
-			<option value="https://data.calgary.ca/resource/qr97-4jvx.geojson?$where=within_circle(point," data-option="4">Traffic Signals</option>
-			<option value="https://data.calgary.ca/resource/u6ce-yibw.geojson?$where=within_circle(point," data-option="5">Road Signs</option>
-			
-			
+            <option value="https://data.calgary.ca/resource/9zvu-p8uz.geojson?$where=within_circle(point," data-option="2">Parcel Address</option>
+            <option value="https://data.calgary.ca/resource/tfs4-3wwa.geojson?$where=within_circle(point," data-option="3">Trees</option>
+            <option value="https://data.calgary.ca/resource/muzh-c9qc.geojson?$where=within_circle(point," data-option="4">Transit Stops</option>
+			<option value="https://data.calgary.ca/resource/qr97-4jvx.geojson?$where=within_circle(point," data-option="5">Traffic Signals</option>
+			<option value="https://data.calgary.ca/resource/u6ce-yibw.geojson?$where=within_circle(point," data-option="6">Road Signs</option>
+
 			
         </select><br><br>
         <label for="latitude">Latitude:</label>
@@ -70,6 +70,8 @@
             }
         });
 
+
+        //Updates the on map circle representation of the data request area
         function updateCircle(lat, lon, radius) {
             if (circle) {
                 circle.setLatLng([lat, lon]);
@@ -95,17 +97,116 @@
             document.body.removeChild(link);
         }
 		
+        //Function to Modify the building roofline geometry data to remove useless data for easy import
 		function modifyBuildingGeojson(geojson) {
-			if (geojson.type === 'FeatureCollection') {
-				geojson.features.forEach(feature => {
-					feature.properties = { "building": "yes" };
-				});
-			} else if (geojson.type === 'Feature') {
-				geojson.properties = { "building": "yes" };
-			}
+
+        
+            
+            geojson.features.forEach(feature => {
+
+                const newProperties = { };
+
+                if (feature.properties.bldg_code !== undefined){
+                    newProperties ["building"] = "yes";
+                }
+
+                if (feature.properties.mod_dt_utc !== undefined){
+                    newProperties ["note"] = `City of Calgary rooflines - aquisition date - ${feature.properties.mod_dt_utc}`;
+
+                }
+                
+                feature.properties = newProperties;
+            });
+
+		}
+
+
+
+        // Functions to Modify the address data to OSM usable format, Saves house number, street, creates a city tag   
+        function convertAddKeys(feature) { 
+            const newProperties = { };
+            if (feature.properties.house_number !== undefined) {
+                 newProperties ["addr:housenumber"] = feature.properties.house_number;
+            } 
+            if (feature.properties.street_name !== undefined && feature.properties.street_type !== undefined && feature.properties.street_quad !== undefined) { 
+                newProperties["addr:street"] = `${feature.properties.street_name} ${feature.properties.street_type} ${feature.properties.street_quad}`.trim(); }
+
+            newProperties ["addr:city"] = "Calgary";
+
+            feature.properties = newProperties;
+        }
+
+        function modifyParcelAddressGeojson(geojson) {
+			
+            geojson.features.forEach(convertAddKeys);
+
 			return geojson;
 		}
-		
+
+        //function to Modify the trees geojson for OSM importing assistance
+        //saves Spcies, Genus, deciduous, planted date, common name, diameter (DBH) in mm
+        function formatTextString(text){
+            if (!text) return text; 
+            return text.charAt(0).toUpperCase() + text.slice(1).toLowerCase(); 
+
+        }
+
+
+		function modifyTreesGeojson(geojson) {       
+            
+            geojson.features = geojson.features.filter(feature => {
+
+            //filter out the stumps just keep trees and shrubs
+            const assetType = feature.properties.asset_type; 
+            if (assetType === "TREE" || assetType === "SHRUB") {
+
+
+               
+
+                    const newProperties = { };
+
+                    //tree, shrub etc...
+                    if (feature.properties.asset_type !== undefined){
+                        newProperties ["natural"] = feature.properties.asset_type.toLowerCase();
+                    }
+                    if (feature.properties.genus !== undefined){
+                        newProperties ["genus"] = formatTextString(feature.properties.genus);
+                    }
+                    if (feature.properties.species !== undefined){
+                        newProperties ["species"] =  formatTextString(feature.properties.species);
+                    }
+                    if (feature.properties.cultivar !== undefined){
+                        newProperties ["taxon"] =  formatTextString(feature.properties.cultivar);
+                    }
+                    if (feature.properties.common_name !== undefined){
+                        newProperties ["note"] =  formatTextString(feature.properties.common_name);
+                    }
+                    if (feature.properties.asset_subtype !== undefined){
+                        newProperties ["leaf_cycle"] = feature.properties.asset_subtype.toLowerCase();
+                    }
+                    //returns trunk diamter at breast height in cm convert to mm
+                    if (feature.properties.dbh_cm !== undefined){
+                        newProperties ["diameter"] =  feature.properties.dbh_cm + "0";
+                    }                
+                
+                    /*
+                    if (feature.properties.active_dt !== undefined){
+                        newProperties ["start_date"] =  feature.properties.active_dt.substring(1,10);
+                    }  
+                    */
+
+
+                    feature.properties = newProperties;
+
+                return true;
+            }
+
+            return false;
+            });
+
+        }
+
+        //delay function to not hammer the API
 		function sleep(ms) {
 			return new Promise(resolve => setTimeout(resolve, ms));
 		}
@@ -148,10 +249,12 @@
 					console.log("Processing Buildings data");
 					break;
 				case 2:
-					console.log("Option 2 selected");
+                    console.log("Processsing Parcel Address Data");
+                    modifyParcelAddressGeojson(combinedGeojson);
 					break;
 				case 3:
-					console.log("Option 3 selected");
+					console.log("Processing Trees");
+                    modifyTreesGeojson(combinedGeojson);
 					break;
 				case 4:
 					console.log("Option 4 selected");
@@ -159,7 +262,11 @@
 				case 5:
 					console.log("Option 5 selected");
 					break;
-				default:
+                case 6:
+					console.log("Option 6 selected");
+					break;
+                
+                default:
 					console.log("Invalid option");
 			}			
 			
